@@ -82,8 +82,6 @@ st.header("🔄 Visual Pipeline Analytics")
 
 # SANKEY DIAGRAM FLOW GENERATION (Matching image_db9ce1.png style)
 if total_apps > 0:
-    # Define nodes dynamically based on pipeline stages
-    # 0: Total Apps, 1: Active Sent, 2: Interview Stage, 3: Active Interview, 4: Accepted, 5: Declined
     nodes = [
         "Total Applications",       # 0
         "Application Sent (Active)",# 1
@@ -93,7 +91,6 @@ if total_apps > 0:
         "Declined ❌"                # 5
     ]
     
-    # Calculate logical flow volumes through the pipeline based on current status
     flow_to_active_sent = active_apps
     flow_to_interview_stage = interview_apps + accepted_apps
     flow_to_declined = declined_apps
@@ -105,21 +102,18 @@ if total_apps > 0:
     targets = []
     values = []
 
-    # 1. Flow from Total Applications
     if flow_to_active_sent > 0:
         sources.append(0); targets.append(1); values.append(flow_to_active_sent)
     if flow_to_interview_stage > 0:
         sources.append(0); targets.append(2); values.append(flow_to_interview_stage)
     if flow_to_declined > 0:
-        sources.append(0); targets.append(5); values.append(flow_to_declined) # Declined branches off separately
+        sources.append(0); targets.append(5); values.append(flow_to_declined)
 
-    # 2. Flow from Interview Stage
     if flow_interview_to_active > 0:
         sources.append(2); targets.append(3); values.append(flow_interview_to_active)
     if flow_interview_to_accepted > 0:
         sources.append(2); targets.append(4); values.append(flow_interview_to_accepted)
 
-    # Build the Sankey Chart
     fig_sankey = go.Figure(data=[go.Sankey(
         node = dict(
           pad = 15,
@@ -141,12 +135,32 @@ if total_apps > 0:
 else:
     st.info("Add application data below to render the flow pipeline visual.")
 
-# Country Analytics Plot below the Sankey
-st.markdown("### 🌍 Applications by Country")
+# --- NEW STACKED BAR CHART BY COUNTRY (ACTIVE VS INACTIVE) ---
+st.markdown("### 🌍 Applications by Country (Active vs. Inactive)")
 if not df.empty:
-    country_df = df['Country'].value_counts().reset_index()
-    country_df.columns = ['Country', 'Application Count']
-    fig_country = px.bar(country_df, x='Country', y='Application Count', color='Country', text_auto=True)
+    # Create a temporary copy to determine status labels without affecting master table
+    chart_df = df.copy()
+    chart_df['Status'] = chart_df['Stage'].apply(lambda x: 'Inactive (Declined)' if x == 'Declined' else 'Active (Other Stages)')
+    
+    # Group by Country and Status to get counts
+    country_status_df = chart_df.groupby(['Country', 'Status']).size().reset_index(name='Application Count')
+    
+    # Generate Stacked Bar Chart
+    fig_country = px.bar(
+        country_status_df, 
+        x='Country', 
+        y='Application Count', 
+        color='Status',
+        color_discrete_map={
+            'Active (Other Stages)': '#2ecc71',   # Green for running applications
+            'Inactive (Declined)': '#e74c3c'     # Red for declined applications
+        },
+        text_auto=True,
+        title="Application Status Breakdown Per Country"
+    )
+    
+    # Ensure totals match up visually in stacked blocks cleanly
+    fig_country.update_layout(barmode='stack', xaxis={'categoryorder':'total descending'})
     st.plotly_chart(fig_country, use_container_width=True)
 else:
     st.info("No data available to display country chart.")
