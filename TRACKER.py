@@ -3,39 +3,31 @@ import pandas as pd
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
-import gspread
+from streamlit_gsheets import GSheetsConnection
 
 # Page layout setup
 st.set_page_config(page_title="Europa Job Tracker", layout="wide")
 st.title("💼 Live Job Application Tracker Dashboard")
 
-# --- CONNECT TO GOOGLE SHEETS VIA GSPREAD ---
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1t7EuHb_eB3t6mTe3rXXtE7UR_jaQQhZLJT1TA-OXiwE/edit?usp=sharing"
-WORKSHEET_NAME = "Europajob_application"
-
-@st.cache_resource
-def get_gc_client():
-    # Authenticate via service account using streamlit secrets
-    credentials = dict(st.secrets["gspread_credentials"])
-    return gspread.service_account_from_dict(credentials)
+# --- CONNECT TO GOOGLE SHEETS ---
+# This initializes the connection using Streamlit's official integration
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_live_data():
     try:
-        gc = get_gc_client()
-        sh = gc.open_by_url(SPREADSHEET_URL)
-        worksheet = sh.worksheet(WORKSHEET_NAME)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
+        # Pull data live from the sheet configured in your Streamlit secrets
+        df = conn.read(ttl=0) 
+        df = df.dropna(how='all')
         
-        if df.empty or 'Company' not in df.columns:
+        if 'Company' in df.columns:
+            df = df[df['Company'].notna() & (df['Company'] != "")]
+        else:
             return pd.DataFrame(columns=[
                 'Company', 'URL of Job Description', 'Role', 'Country', 
                 'Date of Application', 'Running Time', 'Stage', 'Notes'
             ])
-            
-        df = df.dropna(how='all')
-        df = df[df['Company'].notna() & (df['Company'] != "")]
         
+        # Standardize application stages
         stage_mapping = {
             'Application Sent': 'Application Sent', 'Declined': 'Declined',
             'Interviewing': 'Interview', 'Interview': 'Interview',
@@ -48,26 +40,8 @@ def load_live_data():
         df['Notes'] = df['Notes'].fillna('')
         return df
     except Exception as e:
-        st.error(f"Error connecting to Google Sheet: {e}")
+        st.error(f"Error reading from Google Sheet: {e}")
         return pd.DataFrame(columns=['Company', 'URL of Job Description', 'Role', 'Country', 'Date of Application', 'Running Time', 'Stage', 'Notes'])
-
-def save_to_sheet(updated_df):
-    try:
-        gc = get_gc_client()
-        sh = gc.open_by_url(SPREADSHEET_URL)
-        worksheet = sh.worksheet(WORKSHEET_NAME)
-        worksheet.clear()
-        
-        # Ensure dates are written cleanly back as text strings
-        write_df = updated_df.copy()
-        if 'Date of Application' in write_df.columns:
-            write_df['Date of Application'] = write_df['Date of Application'].astype(str)
-            
-        worksheet.update([write_df.columns.values.tolist()] + write_df.values.tolist())
-        return True
-    except Exception as e:
-        st.error(f"Failed to save changes: {e}")
-        return False
 
 # Fetch live tracking data
 df = load_live_data()
@@ -156,53 +130,4 @@ with st.form("new_app_form", clear_on_submit=True):
 
     if submit and company:
         final_role = role if role else "Not Specified"
-        new_row = pd.DataFrame([{
-            'Company': company, 'URL of Job Description': url, 'Role': final_role, 'Country': country,
-            'Date of Application': date_app.strftime('%m/%d/%Y'), 'Running Time': 0, 'Stage': stage, 'Notes': notes
-        }])
-        updated_df = pd.concat([df, new_row], ignore_index=True)
-        if save_to_sheet(updated_df):
-            st.success(f"Successfully logged {final_role} at {company} to Google Sheets!")
-            st.rerun()
-
-st.markdown("---")
-
-# --- FILTER & EDIT DATA ---
-st.header("🔍 Edit & View Applications")
-allowed_stages = ["Application Sent", "Interview", "Accepted", "Declined"]
-stage_filter = st.multiselect("Filter table view by Stage", options=allowed_stages, default=allowed_stages)
-search_query = st.text_input("Search by Company, Role, or Country")
-
-filtered_df = df[df['Stage'].isin(stage_filter)]
-if search_query:
-    filtered_df = filtered_df[
-        filtered_df['Company'].str.contains(search_query, case=False, na=False) |
-        filtered_df['Role'].str.contains(search_query, case=False, na=False) |
-        filtered_df['Country'].str.contains(search_query, case=False, na=False)
-    ]
-
-edited_table = st.data_editor(
-    filtered_df,
-    column_config={
-        "Stage": st.column_config.SelectboxColumn("Stage", options=allowed_stages, required=True),
-        "Company": st.column_config.Column(disabled=True),
-        "Date of Application": st.column_config.Column(disabled=True),
-        "Running Time": st.column_config.Column(disabled=True),
-    },
-    hide_index=True, use_container_width=True, key="table_editor"
-)
-
-if st.button("💾 Save Table Changes", type="primary"):
-    df.update(edited_table)
-    if save_to_sheet(df):
-        st.success("Changes saved successfully to Google Sheets!")
-        st.rerun()
-
-st.markdown("---")
-# --- EXPORT TO CSV SECTION ---
-st.markdown("### 📥 Export Your Table")
-csv_data = filtered_df.to_csv(index=False).encode('utf-8')
-st.download_button(
-    label="Download Current Table View as CSV", data=csv_data,
-    file_name=f"job_applications_export_{datetime.today().strftime('%Y%m%d')}.csv", mime="text/csv"
-)
+        new_row = pd.DataFrame(
