@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import plotly.express as px
-import graphviz
+import plotly.graph_objects as go
 
 # Path to your existing data file
 FILE_NAME = "Europa - Sheet3.csv"
@@ -44,14 +44,11 @@ if 'df' not in st.session_state:
 df = st.session_state.df
 
 # --- DYNAMIC RUNNING TIME CALCULATION ---
-# Parse dates to compute dynamic duration based on datetime.today()
 today = pd.to_datetime(datetime.today().date())
 parsed_dates = pd.to_datetime(df['Date of Application'], errors='coerce')
-
-# Running days calculated dynamically
 df['Running Time'] = (today - parsed_dates).dt.days.fillna(0).astype(int)
 
-# Reset finished pipelines (Accepted or Declined) to 0 or leave static
+# Reset finished pipelines (Accepted or Declined) to 0
 df.loc[df['Stage'].isin(['Accepted', 'Declined']), 'Running Time'] = 0
 
 # Page layout setup
@@ -64,6 +61,8 @@ col1, col2, col3, col4 = st.columns(4)
 
 total_apps = len(df)
 active_apps = len(df[df['Stage'] == 'Application Sent'])
+interview_apps = len(df[df['Stage'] == 'Interview'])
+accepted_apps = len(df[df['Stage'] == 'Accepted'])
 declined_apps = len(df[df['Stage'] == 'Declined'])
 decline_rate = int((declined_apps / total_apps * 100)) if total_apps > 0 else 0
 
@@ -81,51 +80,76 @@ st.markdown("---")
 # --- PIPELINE & GRAPH VISUALIZATIONS ---
 st.header("🔄 Visual Pipeline Analytics")
 
-# 1. Flow Graph Generation using Graphviz
-dot = graphviz.Digraph(comment='Application Flow Pipeline')
-dot.attr(rankdir='LR', size='10,4')
+# SANKEY DIAGRAM FLOW GENERATION (Matching image_db9ce1.png style)
+if total_apps > 0:
+    # Define nodes dynamically based on pipeline stages
+    # 0: Total Apps, 1: Active Sent, 2: Interview Stage, 3: Active Interview, 4: Accepted, 5: Declined
+    nodes = [
+        "Total Applications",       # 0
+        "Application Sent (Active)",# 1
+        "Interview Stage",          # 2
+        "Interview (Active)",       # 3
+        "Accepted 🎉",              # 4
+        "Declined ❌"                # 5
+    ]
+    
+    # Calculate logical flow volumes through the pipeline based on current status
+    flow_to_active_sent = active_apps
+    flow_to_interview_stage = interview_apps + accepted_apps
+    flow_to_declined = declined_apps
+    
+    flow_interview_to_active = interview_apps
+    flow_interview_to_accepted = accepted_apps
 
-# Define custom styling for nodes
-dot.node('A', 'Application Sent', shape='box', style='filled', fillcolor='lightblue')
-dot.node('B', 'Interview', shape='box', style='filled', fillcolor='wheat')
-dot.node('C', 'Accepted', shape='box', style='filled', fillcolor='lightgreen')
-dot.node('D', 'Declined', shape='box', style='filled', fillcolor='lightcoral')
+    sources = []
+    targets = []
+    values = []
 
-# Core Application Progression Path
-dot.edge('A', 'B')
-dot.edge('B', 'C')
+    # 1. Flow from Total Applications
+    if flow_to_active_sent > 0:
+        sources.append(0); targets.append(1); values.append(flow_to_active_sent)
+    if flow_to_interview_stage > 0:
+        sources.append(0); targets.append(2); values.append(flow_to_interview_stage)
+    if flow_to_declined > 0:
+        sources.append(0); targets.append(5); values.append(flow_to_declined) # Declined branches off separately
 
-# Separate branching path for Declined out from individual stages
-dot.edge('A', 'D', style='dashed', label='Rejected')
-dot.edge('B', 'D', style='dashed', label='Rejected')
+    # 2. Flow from Interview Stage
+    if flow_interview_to_active > 0:
+        sources.append(2); targets.append(3); values.append(flow_interview_to_active)
+    if flow_interview_to_accepted > 0:
+        sources.append(2); targets.append(4); values.append(flow_interview_to_accepted)
 
-st.graphviz_chart(dot)
+    # Build the Sankey Chart
+    fig_sankey = go.Figure(data=[go.Sankey(
+        node = dict(
+          pad = 15,
+          thickness = 20,
+          line = dict(color = "black", width = 0.5),
+          label = nodes,
+          color = ["#3498db", "#5dade2", "#f39c12", "#f5b041", "#2ecc71", "#e74c3c"]
+        ),
+        link = dict(
+          source = sources,
+          target = targets,
+          value = values,
+          color = ["rgba(93, 173, 226, 0.4)", "rgba(243, 156, 18, 0.4)", "rgba(231, 76, 60, 0.3)", 
+                   "rgba(245, 176, 65, 0.4)", "rgba(46, 204, 113, 0.4)"]
+      ))])
 
-# 2. Country & Date Analytics Plots
-col_chart1, col_chart2 = st.columns(2)
+    fig_sankey.update_layout(title_text="Application Flow Pipeline (Sankey Diagram)", font_size=12, height=450)
+    st.plotly_chart(fig_sankey, use_container_width=True)
+else:
+    st.info("Add application data below to render the flow pipeline visual.")
 
-with col_chart1:
-    st.subheader("🌍 Applications by Country")
-    if not df.empty:
-        country_df = df['Country'].value_counts().reset_index()
-        country_df.columns = ['Country', 'Application Count']
-        fig_country = px.bar(country_df, x='Country', y='Application Count', color='Country', text_auto=True)
-        st.plotly_chart(fig_country, use_container_width=True)
-    else:
-        st.info("No data available to display country chart.")
-
-with col_chart2:
-    st.subheader("📅 Applications Over Time")
-    if not df.empty:
-        # Group count values by standardized application dates
-        date_df = df.copy()
-        date_df['Parsed Date'] = pd.to_datetime(date_df['Date of Application']).dt.date
-        timeline_df = date_df.groupby('Parsed Date').size().reset_index(name='Count').sort_values('Parsed Date')
-        
-        fig_date = px.line(timeline_df, x='Parsed Date', y='Count', markers=True, labels={'Parsed Date': 'Application Date'})
-        st.plotly_chart(fig_date, use_container_width=True)
-    else:
-        st.info("No data available to display date line graph.")
+# Country Analytics Plot below the Sankey
+st.markdown("### 🌍 Applications by Country")
+if not df.empty:
+    country_df = df['Country'].value_counts().reset_index()
+    country_df.columns = ['Country', 'Application Count']
+    fig_country = px.bar(country_df, x='Country', y='Application Count', color='Country', text_auto=True)
+    st.plotly_chart(fig_country, use_container_width=True)
+else:
+    st.info("No data available to display country chart.")
 
 st.markdown("---")
 
@@ -155,7 +179,7 @@ with st.form("new_app_form", clear_on_submit=True):
                 'Role': final_role,
                 'Country': country,
                 'Date of Application': date_app.strftime('%m/%d/%Y'),
-                'Running Time': 0, # Evaluated on subsequent layout script runs
+                'Running Time': 0,
                 'Stage': stage,
                 'Notes': notes
             }
@@ -173,12 +197,10 @@ st.markdown("---")
 st.header("🔍 Edit & View Applications")
 st.info("💡 **Tip:** Double-click on any cell in the **Stage** column to pick a new status from the dropdown list. Click **Save Table Changes** below when done.")
 
-# Filters
 allowed_stages = ["Application Sent", "Interview", "Accepted", "Declined"]
 stage_filter = st.multiselect("Filter table view by Stage", options=allowed_stages, default=allowed_stages)
 search_query = st.text_input("Search by Company, Role, or Country")
 
-# Filtered view logic
 filtered_df = df[df['Stage'].isin(stage_filter)]
 
 if search_query:
@@ -188,7 +210,6 @@ if search_query:
         filtered_df['Country'].str.contains(search_query, case=False, na=False)
     ]
 
-# Render data editor
 edited_table = st.data_editor(
     filtered_df,
     column_config={
@@ -208,7 +229,6 @@ edited_table = st.data_editor(
     key="table_editor"
 )
 
-# Save Updates
 if st.button("💾 Save Table Changes", type="primary"):
     df.update(edited_table)
     df.to_csv(FILE_NAME, index=False)
