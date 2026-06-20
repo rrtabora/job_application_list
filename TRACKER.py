@@ -10,18 +10,21 @@ st.set_page_config(page_title="Europa Job Tracker", layout="wide")
 st.title("💼 Live Job Application Tracker Dashboard")
 
 # --- CONNECT TO GOOGLE SHEETS ---
-# Uses the secrets configured in Streamlit Cloud
+# Hardcoding the link directly into the connection to prevent Secrets parsing errors
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1t7EuHb_eB3t6mTe3rXXtE7UR_jaQQhZLJT1TA-OXiwE/edit?usp=sharing"
+WORKSHEET_NAME = "Europajob_application" # Matches the sheet tab name in image_db2baa.png
+
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_live_data():
-    # Read the data live from the Google Sheet
-    df = conn.read(ttl=0) # ttl=0 forces an explicit reload, disabling stale cache
+    # Read the data live from the explicit Google Sheet URL and tab name
+    df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=WORKSHEET_NAME, ttl=0) 
     df = df.dropna(how='all')
     
     if 'Company' in df.columns:
         df = df[df['Company'].notna()]
     else:
-        # Fallback layout context structure if the sheet is completely empty/new
+        # Fallback structure if columns aren't found
         return pd.DataFrame(columns=[
             'Company', 'URL of Job Description', 'Role', 'Country', 
             'Date of Application', 'Running Time', 'Stage', 'Notes'
@@ -111,7 +114,7 @@ if total_apps > 0:
     if flow_to_interview_stage > 0:
         sources.append(0); targets.append(2); values.append(flow_to_interview_stage)
     if flow_to_declined > 0:
-        sources.append(0); targets.append(5); values.append(flow_to_declined) # Branches out independently
+        sources.append(0); targets.append(5); values.append(flow_to_declined)
 
     # 2. Flow downstream out from Interview Stage
     if flow_interview_to_active > 0:
@@ -144,11 +147,7 @@ else:
 st.markdown("### 🌍 Applications by Country (Active vs. Inactive)")
 if not df.empty:
     chart_df = df.copy()
-    
-    # Map stages explicitly into binary categories
     chart_df['Status'] = chart_df['Stage'].apply(lambda x: 'Inactive (Declined)' if x == 'Declined' else 'Active (Other Stages)')
-    
-    # Calculate volume count distributions grouped per country location status split
     country_status_df = chart_df.groupby(['Country', 'Status']).size().reset_index(name='Application Count')
     
     fig_country = px.bar(
@@ -164,7 +163,6 @@ if not df.empty:
         title="Application Status Breakdown Per Country"
     )
     
-    # Stack layout config sorting largest aggregate country bars left-most
     fig_country.update_layout(barmode='stack', xaxis={'categoryorder':'total descending'})
     st.plotly_chart(fig_country, use_container_width=True)
 else:
@@ -202,9 +200,9 @@ with st.form("new_app_form", clear_on_submit=True):
                 'Stage': stage,
                 'Notes': notes
             }])
-            # Append rows natively into structural matrix and upload directly to Google Sheets
             updated_df = pd.concat([df, new_row], ignore_index=True)
-            conn.update(data=updated_df)
+            # Send data updates live back to explicit Google Sheet destination
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet=WORKSHEET_NAME, data=updated_df)
             st.success(f"Successfully logged {final_role} at {company} to Google Sheets!")
             st.rerun()
         else:
@@ -229,7 +227,6 @@ if search_query:
         filtered_df['Country'].str.contains(search_query, case=False, na=False)
     ]
 
-# Display data interactive spreadsheet interface component config
 edited_table = st.data_editor(
     filtered_df,
     column_config={
@@ -249,10 +246,10 @@ edited_table = st.data_editor(
     key="table_editor"
 )
 
-# Sync manual data editor revisions permanently down to the Cloud Sheets connection target
 if st.button("💾 Save Table Changes", type="primary"):
     df.update(edited_table)
-    conn.update(data=df)
+    # Sync structural revisions live back to explicit Google Sheet destination
+    conn.update(spreadsheet=SPREADSHEET_URL, worksheet=WORKSHEET_NAME, data=df)
     st.success("Changes saved successfully to Google Sheets!")
     st.rerun()
 
