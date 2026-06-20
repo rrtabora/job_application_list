@@ -128,6 +128,50 @@ with st.form("new_app_form", clear_on_submit=True):
     notes = st.text_area("Notes")
     submit = st.form_submit_button("Log Application")
 
-    if submit and company:
-        final_role = role if role else "Not Specified"
-        new_row = pd.DataFrame(
+    if submit:
+        if company:
+            final_role = role if role else "Not Specified"
+            new_row = pd.DataFrame([{
+                'Company': company, 
+                'URL of Job Description': url, 
+                'Role': final_role, 
+                'Country': country,
+                'Date of Application': date_app.strftime('%m/%d/%Y'), 
+                'Running Time': 0, 
+                'Stage': stage, 
+                'Notes': notes
+            }])
+            try:
+                updated_df = pd.concat([df, new_row], ignore_index=True)
+                conn.update(data=updated_df)
+                st.success(f"Successfully logged {final_role} at {company} to Google Sheets!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to update sheet: {e}")
+        else:
+            st.error("Please fill out at least the 'Company Name' field.")
+
+st.markdown("---")
+
+# --- FILTER & EDIT DATA ---
+st.header("🔍 Edit & View Applications")
+st.info("💡 **Tip:** Double-click on any cell in the **Stage** column to pick a new status from the dropdown list. Click **Save Table Changes** below when done.")
+
+allowed_stages = ["Application Sent", "Interview", "Accepted", "Declined"]
+stage_filter = st.multiselect("Filter table view by Stage", options=allowed_stages, default=allowed_stages)
+search_query = st.text_input("Search by Company, Role, or Country")
+
+filtered_df = df[df['Stage'].isin(stage_filter)]
+if search_query:
+    filtered_df = filtered_df[
+        filtered_df['Company'].str.contains(search_query, case=False, na=False) |
+        filtered_df['Role'].str.contains(search_query, case=False, na=False) |
+        filtered_df['Country'].str.contains(search_query, case=False, na=False)
+    ]
+
+edited_table = st.data_editor(
+    filtered_df,
+    column_config={
+        "Stage": st.column_config.SelectboxColumn("Stage", options=allowed_stages, required=True),
+        "Company": st.column_config.Column(disabled=True),
+        "Date of Application": st.column_config.Column(
